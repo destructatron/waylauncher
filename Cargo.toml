@@ -1,0 +1,17 @@
+[package]
+name = "waylauncher"
+version = "0.1.0"
+edition = "2021"
+description = "GTK4 Wayland application launcher"
+license = "MIT"
+repository = "https://github.com/destructatron/waylauncher"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.10", features = ["v4_14"] }
+gtk4-layer-shell = "0.7"
+freedesktop-desktop-entry = "0.8"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+shell-words = "1"
+log = "0.4"
+env_logger = "0.11"
