@@ -8,6 +8,9 @@ A lightweight GTK4 application launcher for Wayland. Designed to be fast, keyboa
 - Desktop icon mode (`--desktop-mode`) shows entries from `~/Desktop`
 - Real-time search filtering across app name, description, and categories
 - Wayland layer shell overlay with exclusive keyboard grab
+- Command mode (`--command`) for running arbitrary shell commands
+- Tab completion for commands (from `$PATH`) and file paths
+- Command history with Up/Down arrow navigation, persisted across sessions
 - Full accessibility: labeled widgets, keyboard navigation, AT-SPI announcements via Orca
 
 ## Dependencies
@@ -63,9 +66,12 @@ waylauncher
 
 # Launch in desktop icon mode (shows ~/Desktop entries)
 waylauncher --desktop-mode
+
+# Launch in command mode (run dialog)
+waylauncher --command
 ```
 
-### Keyboard
+### Keyboard — Application Launcher
 
 | Key | Action |
 |-----|--------|
@@ -73,6 +79,19 @@ waylauncher --desktop-mode
 | Arrow keys | Navigate the list |
 | Enter | Launch the selected application |
 | Escape | Close the launcher |
+
+### Keyboard — Command Mode
+
+| Key | Action |
+|-----|--------|
+| Any character | Type a shell command |
+| Tab | Autocomplete command names or file paths |
+| Down | Recall older command from history |
+| Up | Recall newer command from history |
+| Enter | Execute the command |
+| Escape | Close the dialog |
+
+Command history is stored at `~/.local/share/waylauncher/history` and persists across sessions. When opened, the entry is pre-filled with the last command you ran.
 
 ### Environment Variables
 

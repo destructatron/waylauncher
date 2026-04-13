@@ -6,4 +6,8 @@ pub struct Config {
     /// Show entries from ~/Desktop instead of XDG application directories
     #[arg(short, long)]
     pub desktop_mode: bool,
+
+    /// Show a command entry dialog to run an arbitrary shell command
+    #[arg(short, long)]
+    pub command: bool,
 }

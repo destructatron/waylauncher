@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use log::{error, info};
 
@@ -25,6 +25,56 @@ pub fn strip_field_codes(exec: &str) -> String {
     }
 
     result.trim().to_string()
+}
+
+/// Launch a raw shell command string via `sh -c`.
+/// Validates the command exists first, then spawns it.
+/// Returns `Ok(())` on success, or an error message if the command was not found.
+pub fn launch_shell(command: &str) -> Result<(), String> {
+    info!("Launching shell command: {}", command);
+
+    // Extract the first word (the program name) to validate it exists
+    let program = command.split_whitespace().next().unwrap_or("");
+    if program.is_empty() {
+        return Err("No command entered".to_string());
+    }
+
+    // Use `command -v` to check if the program is a valid command/alias/builtin
+    let check = Command::new("sh")
+        .arg("-c")
+        .arg(format!("command -v {}", program))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    match check {
+        Ok(status) if !status.success() => {
+            let msg = format!("Command not found: {}", program);
+            error!("{}", msg);
+            return Err(msg);
+        }
+        Err(e) => {
+            let msg = format!("Failed to validate command: {}", e);
+            error!("{}", msg);
+            return Err(msg);
+        }
+        _ => {}
+    }
+
+    // Command exists — spawn it
+    match Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = format!("Failed to launch '{}': {}", command, e);
+            error!("{}", msg);
+            Err(msg)
+        }
+    }
 }
 
 /// Launch an application from its Exec string.

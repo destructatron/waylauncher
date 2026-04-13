@@ -1,3 +1,4 @@
+mod command_window;
 mod config;
 mod desktop_entry;
 mod launcher;
@@ -7,6 +8,7 @@ mod window;
 use clap::Parser;
 use gtk::prelude::*;
 
+use command_window::CommandWindow;
 use config::Config;
 use window::WaylauncherWindow;
 
@@ -20,8 +22,13 @@ fn main() {
         .build();
 
     app.connect_activate(move |app| {
-        let window = WaylauncherWindow::new(app, config.desktop_mode);
-        window.present();
+        if config.command {
+            let window = CommandWindow::new(app);
+            window.present();
+        } else {
+            let window = WaylauncherWindow::new(app, config.desktop_mode);
+            window.present();
+        }
     });
 
     app.run_with_args::<String>(&[]);
