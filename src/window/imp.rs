@@ -208,10 +208,7 @@ fn setup_factory(factory: &SignalListItemFactory) {
     factory.connect_setup(|_factory, item| {
         let item = item.downcast_ref::<gtk::ListItem>().unwrap();
 
-        let icon = gtk::Image::builder()
-            .pixel_size(32)
-            .margin_end(8)
-            .build();
+        let icon = gtk::Image::builder().pixel_size(32).margin_end(8).build();
 
         let name_label = Label::builder()
             .xalign(0.0)

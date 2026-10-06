@@ -13,11 +13,11 @@ glib::wrapper! {
 
 impl CommandWindow {
     pub fn new(app: &Application) -> Self {
-        let window: Self = glib::Object::builder()
-            .property("application", app)
-            .build();
+        let window: Self = glib::Object::builder().property("application", app).build();
 
-        window.set_title(Some("Run Command"));
+        window.set_title(Some("Waylauncher Command"));
+        window.set_accessible_role(gtk::AccessibleRole::Window);
+        window.update_property(&[gtk::accessible::Property::Label("Waylauncher Command")]);
 
         window
     }

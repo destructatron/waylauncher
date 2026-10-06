@@ -16,11 +16,8 @@ impl DesktopEntryObject {
         categories: &str,
         terminal: bool,
     ) -> Self {
-        let search_string = format!(
-            "{} {} {} {}",
-            name, generic_name, comment, categories
-        )
-        .to_lowercase();
+        let search_string =
+            format!("{} {} {} {}", name, generic_name, comment, categories).to_lowercase();
 
         glib::Object::builder()
             .property("name", name)

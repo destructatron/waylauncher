@@ -109,7 +109,33 @@ pub fn launch(exec: &str, terminal: bool) {
     info!("Launching: {} {:?}", program, program_args);
 
     match Command::new(&program).args(&program_args).spawn() {
-        Ok(_) => {}
+        Ok(_) => announce_launching(),
         Err(e) => error!("Failed to launch '{}': {}", program, e),
+    }
+}
+
+/// Ask soundthemed, if it's running, to play its "app-launching" sound.
+/// Synchronous with a short timeout because the launcher window closes
+/// (and the app may exit) straight after launching.
+fn announce_launching() {
+    use gtk::gio;
+    use gtk::prelude::*;
+
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
+        return;
+    };
+    let result = bus.call_sync(
+        Some("org.freedesktop.SoundThemed1"),
+        "/org/freedesktop/SoundThemed1",
+        "org.freedesktop.SoundThemed1",
+        "PlaySound",
+        Some(&("app-launching",).to_variant()),
+        None,
+        gio::DBusCallFlags::NO_AUTO_START,
+        250,
+        gio::Cancellable::NONE,
+    );
+    if let Err(e) = result {
+        info!("soundthemed not reachable for launch sound: {}", e);
     }
 }

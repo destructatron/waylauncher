@@ -193,6 +193,13 @@ impl ObjectImpl for CommandWindowInner {
 
         // Focus the entry
         self.entry.grab_focus();
+
+        // Announce the window to screen readers (layer-shell overlays don't
+        // trigger a standard window-activate event).
+        let entry = self.entry.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
+            entry.announce("Waylauncher Command", AccessibleAnnouncementPriority::High);
+        });
     }
 }
 
@@ -227,8 +234,12 @@ fn complete_entry(entry: &Entry) {
     let before_cursor = &text[..cursor.min(text.len())];
     let after_cursor = &text[cursor.min(text.len())..];
 
-    // Find the start of the current token (respect spaces)
-    let token_start = before_cursor.rfind(' ').map(|i| i + 1).unwrap_or(0);
+    // Find the start of the current token. Only *unescaped* spaces are token
+    // boundaries — a `\ ` inside a completed path is part of the filename, not
+    // a separator, so it must not split the token.
+    let token_start = last_unescaped_space(before_cursor)
+        .map(|i| i + 1)
+        .unwrap_or(0);
     let prefix = &before_cursor[token_start..];
     let is_first_token = !before_cursor[..token_start].contains(|c: char| !c.is_whitespace());
 
@@ -243,7 +254,12 @@ fn complete_entry(entry: &Entry) {
     };
 
     if let Some(completed) = completion {
-        let new_text = format!("{}{}{}", &before_cursor[..token_start], completed, after_cursor);
+        let new_text = format!(
+            "{}{}{}",
+            &before_cursor[..token_start],
+            completed,
+            after_cursor
+        );
         entry.set_text(&new_text);
         entry.set_position((token_start + completed.len()) as i32);
 
@@ -290,15 +306,23 @@ fn complete_command(prefix: &str) -> Option<String> {
 }
 
 /// Complete a file or directory path.
+///
+/// `prefix` is the raw token from the entry, which may contain backslash
+/// escapes from earlier completions (e.g. `~/My\ Fol`). The returned
+/// completion is likewise backslash-escaped so it survives `sh -c` word
+/// splitting as a single argument.
 fn complete_path(prefix: &str) -> Option<String> {
-    let expanded = if prefix.starts_with('~') {
-        if let Some(home) = dirs::home_dir() {
-            home.to_string_lossy().to_string() + &prefix[1..]
-        } else {
-            prefix.to_string()
-        }
-    } else {
-        prefix.to_string()
+    // Escapes only matter for matching against real filenames on disk, so work
+    // on the unescaped form here and re-escape the result at the end.
+    let unescaped = shell_unescape(prefix);
+
+    // Tilde expansion, for filesystem access only.
+    let expanded = match unescaped.strip_prefix('~') {
+        Some(rest) => match dirs::home_dir() {
+            Some(home) => home.to_string_lossy().to_string() + rest,
+            None => unescaped.clone(),
+        },
+        None => unescaped.clone(),
     };
 
     let (dir, file_prefix) = if let Some(slash_pos) = expanded.rfind('/') {
@@ -312,28 +336,23 @@ fn complete_path(prefix: &str) -> Option<String> {
         (".".to_string(), expanded.clone())
     };
 
+    // Directory portion of the *display* path, preserving the ~ the user typed.
+    let display_dir = match unescaped.rfind('/') {
+        Some(slash_pos) => unescaped[..slash_pos + 1].to_string(),
+        None => String::new(),
+    };
+
     let entries = std::fs::read_dir(&dir).ok()?;
-    let mut matches: Vec<String> = Vec::new();
+    // Each match is the full, *unescaped* display path plus its directory flag.
+    let mut matches: Vec<(String, bool)> = Vec::new();
 
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy().to_string();
         if name.starts_with(&file_prefix) {
-            // Reconstruct using the original prefix style (preserve ~)
-            let full = if prefix.contains('/') {
-                let prefix_dir = &prefix[..prefix.rfind('/').unwrap() + 1];
-                format!("{}{}", prefix_dir, name)
-            } else {
-                name.clone()
-            };
-
-            // Add trailing / for directories
+            let full = format!("{}{}", display_dir, name);
             let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
-            if is_dir {
-                matches.push(format!("{}/", full));
-            } else {
-                matches.push(format!("{} ", full));
-            }
+            matches.push((full, is_dir));
         }
     }
 
@@ -344,15 +363,72 @@ fn complete_path(prefix: &str) -> Option<String> {
     matches.sort();
 
     if matches.len() == 1 {
-        Some(matches.remove(0))
+        let (full, is_dir) = &matches[0];
+        let escaped = shell_escape_path(full);
+        // Directories get a trailing / to continue completing into; files get a
+        // trailing space to move on to the next argument.
+        Some(if *is_dir {
+            format!("{}/", escaped)
+        } else {
+            format!("{} ", escaped)
+        })
     } else {
-        // Strip trailing / and space for common prefix calculation, then return raw prefix
-        let stripped: Vec<String> = matches
-            .iter()
-            .map(|m| m.trim_end_matches('/').trim_end().to_string())
-            .collect();
-        Some(longest_common_prefix(&stripped))
+        // Complete to the longest common prefix of the (unescaped) display
+        // paths, then escape the result.
+        let names: Vec<String> = matches.into_iter().map(|(full, _)| full).collect();
+        Some(shell_escape_path(&longest_common_prefix(&names)))
     }
+}
+
+/// Remove one level of backslash escaping: `\<c>` becomes `<c>`.
+fn shell_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Backslash-escape characters that are special to `sh` so a path is treated as
+/// a single literal argument. Path separators (`/`) and a leading `~` are left
+/// intact so directory traversal and tilde expansion keep working.
+fn shell_escape_path(s: &str) -> String {
+    const SPECIAL: &[char] = &[
+        ' ', '\t', '\n', '\\', '\'', '"', '(', ')', '[', ']', '{', '}', '$', '&', ';', '|', '<',
+        '>', '`', '*', '?', '!', '#',
+    ];
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if SPECIAL.contains(&ch) {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Find the byte index of the last space that is not backslash-escaped.
+fn last_unescaped_space(s: &str) -> Option<usize> {
+    let mut last = None;
+    let mut backslashes = 0usize;
+    for (i, ch) in s.char_indices() {
+        if ch == ' ' && backslashes.is_multiple_of(2) {
+            last = Some(i);
+        }
+        if ch == '\\' {
+            backslashes += 1;
+        } else {
+            backslashes = 0;
+        }
+    }
+    last
 }
 
 /// Path to waylauncher's own command history file.
@@ -379,7 +455,8 @@ fn load_history() -> Vec<String> {
         .collect()
 }
 
-/// Append a command to waylauncher's history file.
+/// Save a command to waylauncher's history file, removing any prior
+/// occurrences so the command only appears once (at the end, as newest).
 fn save_history_entry(command: &str) {
     let path = match history_path() {
         Some(p) => p,
@@ -389,14 +466,18 @@ fn save_history_entry(command: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    use std::io::Write;
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(file, "{}", command);
-    }
+    // Read existing entries, drop any that match the new command, then
+    // append the new command as the latest entry.
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut kept: Vec<&str> = existing
+        .lines()
+        .filter(|line| !line.is_empty() && *line != command)
+        .collect();
+    let command_owned = command.to_string();
+    kept.push(&command_owned);
+
+    let new_contents = kept.join("\n") + "\n";
+    let _ = std::fs::write(&path, new_contents);
 }
 
 /// Find the longest common prefix among a set of strings.
